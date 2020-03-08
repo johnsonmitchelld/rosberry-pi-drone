@@ -10,7 +10,8 @@ project(teleop)
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
-  rosserial
+  sensor_msgs
+  rosserial_arduino
 )
 
 ## System dependencies are found with CMake's conventions
@@ -49,8 +50,7 @@ find_package(catkin REQUIRED COMPONENTS
 ## Generate messages in the 'msg' folder
 # add_message_files(
 #   FILES
-#   Message1.msg
-#   Message2.msg
+#   Joy.msg
 # )
 
 ## Generate services in the 'srv' folder
@@ -69,8 +69,9 @@ find_package(catkin REQUIRED COMPONENTS
 
 ## Generate added messages and services with any dependencies listed here
 # generate_messages(
-#   DEPENDENCIES
-#   std_msgs  # Or other packages containing msgs
+#  DEPENDENCIES
+#  std_msgs  # Or other packages containing msgs
+#  sensor_msgs
 # )
 
 ################################################
@@ -105,7 +106,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES teleop
-#  CATKIN_DEPENDS roscpp rospy rosserial
+  CATKIN_DEPENDS roscpp rospy rosserial_arduino sensor_msgs
 #  DEPENDS system_lib
 )
 
