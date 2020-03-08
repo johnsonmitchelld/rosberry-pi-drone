@@ -2,7 +2,6 @@
 from evdev import InputDevice, categorize, ecodes
 import rospy
 import platform
-print(platform.python_version())
 from sensor_msgs.msg import Joy
 
 # absolute value events
