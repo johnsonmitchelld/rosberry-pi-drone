@@ -1,5 +1,6 @@
 # Quadcopter PID implementation
-[![Build Status](https://travis-ci.org/lobodol/drone-flight-controller.svg?branch=master)](https://travis-ci.org/lobodol/drone-flight-controller)
+
+This repo is a fork of lobodol's Arduino [quadcopter flight controller](https://github.com/lobodol/drone-flight-controller) modified for control by a Raspberry Pi using ROS.
 
 ## 1. Introduction
 
