@@ -175,36 +175,7 @@ void loop() {
     applyMotorSpeed();
 }
 
-/**
- * Generate servo-signal on digital pins #4 #5 #6 #7 with a frequency of 250Hz (4ms period).
- * Direct port manipulation is used for performances.
- *
- * This function might not take more than 2ms to run, which lets 2ms remaining to do other stuff.
- *
- * @see https:// www.arduino.cc/en/Reference/PortManipulation
- */
-void applyMotorSpeed() {
-    // Refresh rate is 250Hz: send ESC pulses every 4000µs
-    while ((now = micros()) - loop_timer < period);
-
-    // Update loop timer
-    loop_timer = now;
-
-    // Set pins #4 #5 #6 #7 HIGH
-    PORTD |= B11110000;
-
-    // Wait until all pins #4 #5 #6 #7 are LOW
-    while (PORTD >= 16) {
-        now        = micros();
-        difference = now - loop_timer;
-
-        if (difference >= pulse_length_esc1) PORTD &= B11101111; // Set pin #4 LOW
-        if (difference >= pulse_length_esc2) PORTD &= B11011111; // Set pin #5 LOW
-        if (difference >= pulse_length_esc3) PORTD &= B10111111; // Set pin #6 LOW
-        if (difference >= pulse_length_esc4) PORTD &= B01111111; // Set pin #7 LOW
-    }
-}
-
+//TODO: rewrite this function
 /**
  * Request raw values from MPU6050.
  */
@@ -291,6 +262,89 @@ void calculateAccelerometerAngles() {
 }
 
 /**
+ * Calculate PID set points on axis YAW, PITCH, ROLL
+ */
+void calculateSetPoints() {
+    pid_set_points[YAW]   = calculateYawSetPoint(pulse_length[mode_mapping[YAW]], pulse_length[mode_mapping[THROTTLE]]);
+    pid_set_points[PITCH] = calculateSetPoint(measures[PITCH], pulse_length[mode_mapping[PITCH]]);
+    pid_set_points[ROLL]  = calculateSetPoint(measures[ROLL], pulse_length[mode_mapping[ROLL]]);
+}
+
+/**
+ * Calculate the PID set point in °/s
+ *
+ * @param float angle         Measured angle (in °) on an axis
+ * @param int   channel_pulse Pulse length of the corresponding receiver channel
+ * @return float
+ */
+float calculateSetPoint(float angle, int channel_pulse) {
+    float level_adjust = angle * 15; // Value 15 limits maximum angle value to ±32.8°
+    float set_point    = 0;
+
+    // Need a dead band of 16µs for better result
+    if (channel_pulse > 1508) {
+        set_point = channel_pulse - 1508;
+    } else if (channel_pulse <  1492) {
+        set_point = channel_pulse - 1492;
+    }
+
+    set_point -= level_adjust;
+    set_point /= 3;
+
+    return set_point;
+}
+
+/**
+ * Calculate the PID set point of YAW axis in °/s
+ *
+ * @param int yaw_pulse      Receiver pulse length of yaw's channel
+ * @param int throttle_pulse Receiver pulse length of throttle's channel
+ * @return float
+ */
+float calculateYawSetPoint(int yaw_pulse, int throttle_pulse) {
+    float set_point = 0;
+
+    // Do not yaw when turning off the motors
+    if (throttle_pulse > 1050) {
+        // There is no notion of angle on this axis as the quadcopter can turn on itself
+        set_point = calculateSetPoint(0, yaw_pulse);
+    }
+
+    return set_point;
+}
+
+
+/**
+ * Calculate errors used by PID controller
+ */
+void calculateErrors() {
+    // Calculate current errors
+    errors[YAW]   = angular_motions[YAW]   - pid_set_points[YAW];
+    errors[PITCH] = angular_motions[PITCH] - pid_set_points[PITCH];
+    errors[ROLL]  = angular_motions[ROLL]  - pid_set_points[ROLL];
+
+    // Calculate sum of errors : Integral coefficients
+    error_sum[YAW]   += errors[YAW];
+    error_sum[PITCH] += errors[PITCH];
+    error_sum[ROLL]  += errors[ROLL];
+
+    // Keep values in acceptable range
+    error_sum[YAW]   = minMax(error_sum[YAW],   -400/Ki[YAW],   400/Ki[YAW]);
+    error_sum[PITCH] = minMax(error_sum[PITCH], -400/Ki[PITCH], 400/Ki[PITCH]);
+    error_sum[ROLL]  = minMax(error_sum[ROLL],  -400/Ki[ROLL],  400/Ki[ROLL]);
+
+    // Calculate error delta : Derivative coefficients
+    delta_err[YAW]   = errors[YAW]   - previous_error[YAW];
+    delta_err[PITCH] = errors[PITCH] - previous_error[PITCH];
+    delta_err[ROLL]  = errors[ROLL]  - previous_error[ROLL];
+
+    // Save current error as previous_error for next time
+    previous_error[YAW]   = errors[YAW];
+    previous_error[PITCH] = errors[PITCH];
+    previous_error[ROLL]  = errors[ROLL];
+}
+
+/**
  * Calculate motor speed for each motor of an X quadcopter depending on received instructions and measures from sensor
  * by applying PID control.
  *
@@ -343,35 +397,61 @@ void pidController() {
     pulse_length_esc4 = minMax(pulse_length_esc4, 1100, 2000);
 }
 
+
 /**
- * Calculate errors used by PID controller
+ * Compensate battery drop applying a coefficient on output values
  */
-void calculateErrors() {
-    // Calculate current errors
-    errors[YAW]   = angular_motions[YAW]   - pid_set_points[YAW];
-    errors[PITCH] = angular_motions[PITCH] - pid_set_points[PITCH];
-    errors[ROLL]  = angular_motions[ROLL]  - pid_set_points[ROLL];
-
-    // Calculate sum of errors : Integral coefficients
-    error_sum[YAW]   += errors[YAW];
-    error_sum[PITCH] += errors[PITCH];
-    error_sum[ROLL]  += errors[ROLL];
-
-    // Keep values in acceptable range
-    error_sum[YAW]   = minMax(error_sum[YAW],   -400/Ki[YAW],   400/Ki[YAW]);
-    error_sum[PITCH] = minMax(error_sum[PITCH], -400/Ki[PITCH], 400/Ki[PITCH]);
-    error_sum[ROLL]  = minMax(error_sum[ROLL],  -400/Ki[ROLL],  400/Ki[ROLL]);
-
-    // Calculate error delta : Derivative coefficients
-    delta_err[YAW]   = errors[YAW]   - previous_error[YAW];
-    delta_err[PITCH] = errors[PITCH] - previous_error[PITCH];
-    delta_err[ROLL]  = errors[ROLL]  - previous_error[ROLL];
-
-    // Save current error as previous_error for next time
-    previous_error[YAW]   = errors[YAW];
-    previous_error[PITCH] = errors[PITCH];
-    previous_error[ROLL]  = errors[ROLL];
+void compensateBatteryDrop() {
+    if (isBatteryConnected()) {
+        pulse_length_esc1 += pulse_length_esc1 * ((1240 - battery_voltage) / (float) 3500);
+        pulse_length_esc2 += pulse_length_esc2 * ((1240 - battery_voltage) / (float) 3500);
+        pulse_length_esc3 += pulse_length_esc3 * ((1240 - battery_voltage) / (float) 3500);
+        pulse_length_esc4 += pulse_length_esc4 * ((1240 - battery_voltage) / (float) 3500);
+    }
 }
+
+/**
+ * Read battery voltage & return whether the battery seems connected
+ *
+ * @return boolean
+ */
+bool isBatteryConnected() {
+    // Reduce noise with a low-pass filter (10Hz cutoff frequency)
+    battery_voltage = battery_voltage * 0.92 + (analogRead(0) + 65) * 0.09853;
+
+    return battery_voltage < 1240 && battery_voltage > 800;
+}
+
+/**
+ * Generate servo-signal on digital pins #4 #5 #6 #7 with a frequency of 250Hz (4ms period).
+ * Direct port manipulation is used for performances.
+ *
+ * This function might not take more than 2ms to run, which lets 2ms remaining to do other stuff.
+ *
+ * @see https:// www.arduino.cc/en/Reference/PortManipulation
+ */
+void applyMotorSpeed() {
+    // Refresh rate is 250Hz: send ESC pulses every 4000µs
+    while ((now = micros()) - loop_timer < period);
+
+    // Update loop timer
+    loop_timer = now;
+
+    // Set pins #4 #5 #6 #7 HIGH
+    PORTD |= B11110000;
+
+    // Wait until all pins #4 #5 #6 #7 are LOW
+    while (PORTD >= 16) {
+        now        = micros();
+        difference = now - loop_timer;
+
+        if (difference >= pulse_length_esc1) PORTD &= B11101111; // Set pin #4 LOW
+        if (difference >= pulse_length_esc2) PORTD &= B11011111; // Set pin #5 LOW
+        if (difference >= pulse_length_esc3) PORTD &= B10111111; // Set pin #6 LOW
+        if (difference >= pulse_length_esc4) PORTD &= B01111111; // Set pin #7 LOW
+    }
+}
+
 
 /**
  * Customize mapping of controls: set here which command is on which channel and call
@@ -384,71 +464,6 @@ void configureChannelMapping() {
     mode_mapping[THROTTLE] = CHANNEL3;
 }
 
-/**
- * Configure gyro and accelerometer precision as following:
- *  - accelerometer: ±8g
- *  - gyro: ±500°/s
- *
- * @see https://www.invensense.com/wp-content/uploads/2015/02/MPU-6000-Register-Map1.pdf
- */
-void setupMpu6050Registers() {
-    // Configure power management
-    Wire.beginTransmission(MPU_ADDRESS); // Start communication with MPU
-    Wire.write(0x6B);                    // Request the PWR_MGMT_1 register
-    Wire.write(0x00);                    // Apply the desired configuration to the register
-    Wire.endTransmission();              // End the transmission
-
-    // Configure the gyro's sensitivity
-    Wire.beginTransmission(MPU_ADDRESS); // Start communication with MPU
-    Wire.write(0x1B);                    // Request the GYRO_CONFIG register
-    Wire.write(0x08);                    // Apply the desired configuration to the register : ±500°/s
-    Wire.endTransmission();              // End the transmission
-
-    // Configure the acceleromter's sensitivity
-    Wire.beginTransmission(MPU_ADDRESS); // Start communication with MPU
-    Wire.write(0x1C);                    // Request the ACCEL_CONFIG register
-    Wire.write(0x10);                    // Apply the desired configuration to the register : ±8g
-    Wire.endTransmission();              // End the transmission
-
-    // Configure low pass filter
-    Wire.beginTransmission(MPU_ADDRESS); // Start communication with MPU
-    Wire.write(0x1A);                    // Request the CONFIG register
-    Wire.write(0x03);                    // Set Digital Low Pass Filter about ~43Hz
-    Wire.endTransmission();              // End the transmission
-}
-
-/**
- * Calibrate MPU6050: take 2000 samples to calculate average offsets.
- * During this step, the quadcopter needs to be static and on a horizontal surface.
- *
- * This function also sends low throttle signal to each ESC to init and prevent them beeping annoyingly.
- *
- * This function might take ~2sec for 2000 samples.
- */
-void calibrateMpu6050() {
-    int max_samples = 2000;
-
-    for (int i = 0; i < max_samples; i++) {
-        readSensor();
-
-        gyro_offset[X] += gyro_raw[X];
-        gyro_offset[Y] += gyro_raw[Y];
-        gyro_offset[Z] += gyro_raw[Z];
-
-        // Generate low throttle pulse to init ESC and prevent them beeping
-        PORTD |= B11110000;      // Set pins #4 #5 #6 #7 HIGH
-        delayMicroseconds(1000); // Wait 1000µs
-        PORTD &= B00001111;      // Then set LOW
-
-        // Just wait a bit before next loop
-        delay(3);
-    }
-
-    // Calculate average offsets
-    gyro_offset[X] /= max_samples;
-    gyro_offset[Y] /= max_samples;
-    gyro_offset[Z] /= max_samples;
-}
 
 /**
  * Make sure that given value is not over min_value/max_value range.
@@ -535,140 +550,4 @@ void resetPidController() {
     previous_error[YAW]   = 0;
     previous_error[PITCH] = 0;
     previous_error[ROLL]  = 0;
-}
-
-/**
- * Calculate PID set points on axis YAW, PITCH, ROLL
- */
-void calculateSetPoints() {
-    pid_set_points[YAW]   = calculateYawSetPoint(pulse_length[mode_mapping[YAW]], pulse_length[mode_mapping[THROTTLE]]);
-    pid_set_points[PITCH] = calculateSetPoint(measures[PITCH], pulse_length[mode_mapping[PITCH]]);
-    pid_set_points[ROLL]  = calculateSetPoint(measures[ROLL], pulse_length[mode_mapping[ROLL]]);
-}
-
-/**
- * Calculate the PID set point in °/s
- *
- * @param float angle         Measured angle (in °) on an axis
- * @param int   channel_pulse Pulse length of the corresponding receiver channel
- * @return float
- */
-float calculateSetPoint(float angle, int channel_pulse) {
-    float level_adjust = angle * 15; // Value 15 limits maximum angle value to ±32.8°
-    float set_point    = 0;
-
-    // Need a dead band of 16µs for better result
-    if (channel_pulse > 1508) {
-        set_point = channel_pulse - 1508;
-    } else if (channel_pulse <  1492) {
-        set_point = channel_pulse - 1492;
-    }
-
-    set_point -= level_adjust;
-    set_point /= 3;
-
-    return set_point;
-}
-
-/**
- * Calculate the PID set point of YAW axis in °/s
- *
- * @param int yaw_pulse      Receiver pulse length of yaw's channel
- * @param int throttle_pulse Receiver pulse length of throttle's channel
- * @return float
- */
-float calculateYawSetPoint(int yaw_pulse, int throttle_pulse) {
-    float set_point = 0;
-
-    // Do not yaw when turning off the motors
-    if (throttle_pulse > 1050) {
-        // There is no notion of angle on this axis as the quadcopter can turn on itself
-        set_point = calculateSetPoint(0, yaw_pulse);
-    }
-
-    return set_point;
-}
-
-/**
- * Compensate battery drop applying a coefficient on output values
- */
-void compensateBatteryDrop() {
-    if (isBatteryConnected()) {
-        pulse_length_esc1 += pulse_length_esc1 * ((1240 - battery_voltage) / (float) 3500);
-        pulse_length_esc2 += pulse_length_esc2 * ((1240 - battery_voltage) / (float) 3500);
-        pulse_length_esc3 += pulse_length_esc3 * ((1240 - battery_voltage) / (float) 3500);
-        pulse_length_esc4 += pulse_length_esc4 * ((1240 - battery_voltage) / (float) 3500);
-    }
-}
-
-/**
- * Read battery voltage & return whether the battery seems connected
- *
- * @return boolean
- */
-bool isBatteryConnected() {
-    // Reduce noise with a low-pass filter (10Hz cutoff frequency)
-    battery_voltage = battery_voltage * 0.92 + (analogRead(0) + 65) * 0.09853;
-
-    return battery_voltage < 1240 && battery_voltage > 800;
-}
-
-/**
- * This Interrupt Sub Routine is called each time input 8, 9, 10 or 11 changed state.
- * Read the receiver signals in order to get flight instructions.
- *
- * This routine must be as fast as possible to prevent main program to be messed up.
- * The trick here is to use port registers to read pin state.
- * Doing (PINB & B00000001) is the same as digitalRead(8) with the advantage of using less CPU loops.
- * It is less convenient but more efficient, which is the most important here.
- *
- * @see https://www.arduino.cc/en/Reference/PortManipulation
- * @see https://www.firediy.fr/article/utiliser-sa-radiocommande-avec-un-arduino-drone-ch-6
- */
-ISR(PCINT0_vect) {
-        current_time = micros();
-
-        // Channel 1 -------------------------------------------------
-        if (PINB & B00000001) {                                        // Is input 8 high ?
-            if (previous_state[CHANNEL1] == LOW) {                     // Input 8 changed from 0 to 1 (rising edge)
-                previous_state[CHANNEL1] = HIGH;                       // Save current state
-                timer[CHANNEL1] = current_time;                        // Save current time
-            }
-        } else if (previous_state[CHANNEL1] == HIGH) {                 // Input 8 changed from 1 to 0 (falling edge)
-            previous_state[CHANNEL1] = LOW;                            // Save current state
-            pulse_length[CHANNEL1] = current_time - timer[CHANNEL1];   // Calculate pulse duration & save it
-        }
-
-        // Channel 2 -------------------------------------------------
-        if (PINB & B00000010) {                                        // Is input 9 high ?
-            if (previous_state[CHANNEL2] == LOW) {                     // Input 9 changed from 0 to 1 (rising edge)
-                previous_state[CHANNEL2] = HIGH;                       // Save current state
-                timer[CHANNEL2] = current_time;                        // Save current time
-            }
-        } else if (previous_state[CHANNEL2] == HIGH) {                 // Input 9 changed from 1 to 0 (falling edge)
-            previous_state[CHANNEL2] = LOW;                            // Save current state
-            pulse_length[CHANNEL2] = current_time - timer[CHANNEL2];   // Calculate pulse duration & save it
-        }
-
-        // Channel 3 -------------------------------------------------
-        if (PINB & B00000100) {                                        // Is input 10 high ?
-            if (previous_state[CHANNEL3] == LOW) {                     // Input 10 changed from 0 to 1 (rising edge)
-                previous_state[CHANNEL3] = HIGH;                       // Save current state
-                timer[CHANNEL3] = current_time;                        // Save current time
-            }
-        } else if (previous_state[CHANNEL3] == HIGH) {                 // Input 10 changed from 1 to 0 (falling edge)
-            previous_state[CHANNEL3] = LOW;                            // Save current state
-            pulse_length[CHANNEL3] = current_time - timer[CHANNEL3];   // Calculate pulse duration & save it
-        }
-
-        // Channel 4 -------------------------------------------------
-        if (PINB & B00001000) {                                        // Is input 11 high ?
-            if (previous_state[CHANNEL4] == LOW) {                     // Input 11 changed from 0 to 1 (rising edge)
-                previous_state[CHANNEL4] = HIGH;                       // Save current state
-                timer[CHANNEL4] = current_time;                        // Save current time
-            }
-        } else if (previous_state[CHANNEL4] == HIGH) {                 // Input 11 changed from 1 to 0 (falling edge)
-            previous_state[CHANNEL4] = LOW;                            // Save current state
-            pulse_length[CHANNEL4] = current_time - timer[CHANNEL4];   // Calculate pulse duration & save it
-        }
 }
