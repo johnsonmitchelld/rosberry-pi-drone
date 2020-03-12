@@ -45,14 +45,6 @@ def controller():
         else:
             break
 
-def normalize_axis(val, dead_zone):
-    if val > dead_zone:
-        return (val - dead_zone) / (1 - dead_zone)
-    if val < -dead_zone:
-        return (val + dead_zone) / (1 - dead_zone)
-    else:
-        return 0.0
-
 def process_event(event, message):
     changed = False
     if event.type > 0:
@@ -61,19 +53,27 @@ def process_event(event, message):
             message.axes[0] = throttle
         if event.code == stickLX:
             value = (event.value - center_throttle) / center_throttle
-            message.axes[1] = normalize_axis(value, 0.15)
+            message.axes[1] = 30 * normalize_axis(value, 0.15)
         if event.code == stickLY:
-            value = -(event.value - center_throttle) / center_throttle
-            message.axes[2] = normalize_axis(value, 0.15)
+            value = (event.value - center_throttle) / center_throttle
+            message.axes[2] = 30 * normalize_axis(value, 0.15)
         if event.code == stickRX:
             value = (event.value - center_throttle) / center_throttle
             message.axes[3] = normalize_axis(value, 0.15)
         if event.code == stickRY:
             value = -(event.value - center_throttle) / center_throttle
             message.axes[4] = normalize_axis(value, 0.15)
-
         if event.code == btnA:
             message.buttons[0] = event.value
+
+def normalize_axis(val, dead_zone):
+    if val > dead_zone:
+        return (val - dead_zone) / (1 - dead_zone)
+    if val < -dead_zone:
+        return (val + dead_zone) / (1 - dead_zone)
+    else:
+        return 0.0
+
 
 if __name__ == '__main__':
     try:
