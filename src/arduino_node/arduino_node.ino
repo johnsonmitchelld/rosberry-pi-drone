@@ -1,7 +1,4 @@
-/*
- * rosserial Subscriber Example
- * Blinks an LED on callback
- */
+
 // ROS include files
 #include <Arduino.h>
 #include <ros.h>
