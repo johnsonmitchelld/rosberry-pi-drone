@@ -197,8 +197,7 @@ void calculateErrors() {
  *
  * Motors A & D run clockwise.
  * Motors B & C run counter-clockwise.
- *
- * Each motor output is considered as a servomotor. As a result, value range is about 1000µs to 2000µs
+ * 
  */
 void pidController() {
 
